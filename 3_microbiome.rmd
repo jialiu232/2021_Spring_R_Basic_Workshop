@@ -1,0 +1,176 @@
+---
+title: "Supplement 3: Microbiome Workflow"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    collapsed: false
+    css: style.css
+---
+
+---- 
+
+Author: Henri Chung, Jia Liu    
+
+Date: 03/27/2021
+
+----
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this tutorial, we will be analyzing microbiome data using the tidymicro package. The tidymicro package is a relatively new package for analysing microbiome data in R. For this, we will be using some of the provided datasets in the tidymicro package.
+
+
+## Preparing the workspace
+
+First we prepare our programming workspace by making sure our environment is cleared of any objects and that we have loaded the necessary packages.
+
+```{r}
+#remove objects from memory
+rm(list = ls())
+
+#load the necessary packages.
+#if the package is not already installed, please install it
+if (!require("tidyMicro")) install.packages("tidyMicro") #tidytext is a package for text analysis following a tidy format.
+
+#load the packages.
+library(tidyMicro)
+```
+
+## Data collection.
+
+The example data from tidymicro provides microbiome samples from premature infants who required mechanical ventilation and had tracheal aspirates collect at 7, 14, and 21 days of age (+/- 48 hours). Each infant had a bronchopulmonary displasia severity classfied as mild, moderate, or severe.
+
+In this example, we will be loading in Operational Taxonomic Unit (OTU) tables organized at Phylum, Class, Order, and Family levels. We then join these OTU tables with their associated metadata.
+
+```{r}
+## Loading OTU tables
+data(bpd_phy, package = "tidyMicro")
+data(bpd_cla, package = "tidyMicro")
+data(bpd_ord, package = "tidyMicro")
+data(bpd_fam, package = "tidyMicro")
+# load metadata data
+data(bpd_clin, package = "tidyMicro")
+
+
+#We combine these datasets into a single object known as a "micro.set"
+otu_tabs <- list(Phylum = bpd_phy, Class = bpd_cla, 
+                 Order = bpd_ord, Family = bpd_fam)
+
+micro.set <- tidy_micro(otu_tabs = otu_tabs,  ## OTU Table
+                        clinical = bpd_clin)  ## Clinical Data
+
+#subset the dataset to only look at information from sample day 14.
+micro.set <- micro.set %>% filter(day == 14)
+```
+
+## Taxa Summaries
+
+OTU tables can be summarized by grouping sequences based on their assigned taxonomy. Here we use the __taxa_summary__ function to summarize our dataset by "Phylum" classification.
+
+```{r}
+#split sentence into individual words.
+taxa_summary(micro.set, table = "Phylum")
+
+```
+**Question: How does the dimensionality (number of features) of the data change as we move between different taxonomic levels? (Phylum, Class, Order, Family)**
+
+
+
+## PCA plots
+
+PCA, or Principal Component Analysis, is a dimension reduction technique that is often used to reduce large datasets into a smaller set of variables known as "principal components". That math behind this process is very involved, but in practice, PCA is commonly used in microbiome analysis to visually characterize the data. By plotting datapoints along the first two principal components, we can compare whether microbiome samples have similiar compositions to other samples in the dataset. This analysis heavily depends on how well the first two principal components explain variation in the data.
+
+```{r}
+pca <- micro_pca(micro.set, table = "Family", grp_var = bpd1, legend_title = "BPD Severity")
+pca
+```
+
+From this figure, we observe that there is no distinct clustering betweem microbiome samples of the same BPD Severity. The red, green, and blue points do not seem to group together in separate parts of the plot. However, the first two principle components only explain 41.2% and 7.1% of the data respectively. Differences between samples may not be accurately represented by a 2 dimension PCA plot. 
+
+**Question: The data does not show any distinct patterns based on BPD severity. Do the observations cluster around any other variable? How could you check?**
+
+## Relative Abundance and Bar Plots
+
+We can compare microbiome samples by their composition. We compare the relative abundance of certain microbes in one sample to another and plot those values in a bar plot. This graph will vary depending on the taxonomic level you decide to summarize over. To avoid too many variables disrupting the plot, relative abundance bar plots are usually summarized over Phyla.
+
+```{r}
+p2 <- ra_bars(micro.set,         ## Dataset
+        table = "Phylum",  ## Table we want
+        bpd1,              ## Variable of interest
+        ylab = "% Relative Abundance", 
+        xlab = "BPD", 
+        main = "Stacked Bar Chart by Phyla")
+p2
+
+#Even when summarized over Phyla, the graph looks a little disordered. We can clean up the graph by only retaining the top 3 highest relative abundance phyla and summarizing the rest into an "other category".
+
+p3 <- ra_bars(micro.set,         ## Dataset
+        table = "Phylum",  ## Table we want
+        bpd1,              ## Variable of interest
+        RA = 0,
+        top_taxa = 3,   
+        ylab = "% Relative Abundance", 
+        xlab = "BPD", 
+        main = "Stacked Bar Charts with top 3 taxa")
+p3
+
+#If necessary, we can pull out individual Phyla from the Other category.
+p4 <- ra_bars(micro.set,         ## Dataset
+        table = "Phylum",  ## Table we want
+        bpd1,              ## Variable of interest
+        RA = 0,
+        top_taxa = 3,   
+        specific_taxa = c("Actinobacteria", "Bacteroidetes"),
+        ylab = "% Relative Abundance", 
+        xlab = "BPD", 
+        main = "Stacked Bar Charts with Actinobacteria and Bacteroidetes")
+p4
+
+```
+## Relative Abundance of Individual Taxa
+
+Instead of looking at the relative abundance of all taxa, we can compare the relative abundance of individual taxa across metadata varaibles. This makes it easier to see the differences in relative abundance between samples. 
+
+```{r}
+
+staph <- "Firmicutes/Bacilli/Bacillales/Staphylococcaceae"
+
+taxa_boxplot(micro.set,        ## Our dataset
+             taxa = staph,     ## Taxa we are interested in
+             y = clr,          ## Making Boxplot of CLR
+             bpd1, gender,     ## Variables of interest
+             ylab = "Staphylococcaceae CLR",
+             main = "Box plot", subtitle = "Subtitle") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+## Correlation Plots
+
+Correlation plots are used to check whether the abundance of a specific bacteria is correlated with values in a metadata variable. In the following chunk, we calculate a correlation heatmap with bacteria summarized by Class with the individual's weight and gestational_age. The __cor_heatmap__ function provided by the tidyMicro package uses Spearman correlation.
+```{r}
+p5 <- micro.set %>% cor_heatmap(table = "Class", weight, gestational_age)
+p5
+```
+
+**Question: What bacteria are most correlated with increases in weight or gestational age? What bacteria are negatively correlated?**
+## Alpha and Beta Diversity
+Alpha and Beta Diversity are measures of the ecological diversity for a given population. Alpha diversity measures the the variation of microbes within a single sample. While Beta diversity measures the variation between samples. 
+
+```{r}
+micro_alpha <- alpha_div(micro.set, 
+                         table = "Family",  ## Table of interest
+                         min_depth = 5000,  ## Requires a Seq Depth of 5000 to be included
+                         min_goods = 80)    ## Requires a Good's coverage of %80 
+
+micro_bray <- beta_div(micro.set, table = "Class", method = "bray")
+
+bray %>% beta_heatmap(micro.set, bpd1)
+```
+
+**Exercise: How would you visualize the alpha diversity between samples?**

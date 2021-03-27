@@ -1,0 +1,173 @@
+---
+title: "Supplement 2: Tidytext Workflow"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    collapsed: false
+    css: style.css
+---
+
+---- 
+
+Author: Henri Chung, Jia Liu    
+
+Date: 03/27/2021
+
+----
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this tutorial, we will be analyzing text data from the American animated televion series __Avatar: The Last Airbender__. We will perform a short text analysis on the data.
+
+
+## Preparing the workspace
+
+First we prepare our programming workspace by making sure our environment is cleared of any objects and that we have loaded the necessary packages.
+
+```{r}
+#remove objects from memory
+rm(list = ls())
+
+#load the necessary packages.
+#if the package is not already installed, please install it
+if (!require("tidyMicro")) install.packages("tidyMicro") #tidytext is a package for text analysis following a tidy format.
+
+#load the packages.
+library(tidyMicro)
+```
+
+## Data collection
+
+```{r}
+avatar <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-08-11/avatar.csv')
+
+#For this analysis we will only look at a subset of the total data, lines said by the character "Katara" in the first book (book == "Water" or book_num = 1)
+
+katara_book1 <- avatar %>%
+  dplyr::filter(book_num == 1 & character == "Katara")
+```
+
+## Calculate word frequencies
+
+One of the most common type of analysis for text data is to calculate word frequencies, or how often a word occurs in a text document. We can easily perform this analysis with tidytext's __unnest_tokens__ function which splits sentences into words.
+
+```{r}
+#split sentence into individual words.
+text_df <- katara_book1 %>% unnest_tokens(word, full_text)
+
+text_df1 <- text_df %>%
+  group_by(chapter_num) %>%
+  count(word, sort = TRUE)
+
+#plot the most used words by "Katara" in book 1 per episode
+p1 <- text_df1 %>%
+  group_by(chapter_num) %>%
+  slice(1:5) %>%
+  ggplot(aes(x = word, y = n)) + 
+  geom_bar(stat = "identity") +
+  facet_wrap(~chapter_num, scales = "free_x") ; p1
+
+#plot the most used words by Katara in book 1 total.
+text_df2<- text_df %>% 
+  count(word, sort = TRUE) %>%
+  slice(1:10) %>%
+  mutate(word = reorder(word, n))
+
+p2 <- ggplot(text_df2, aes(x = n, y = word)) + geom_col(); p2
+```
+**Question: Are these word frequency plots useful? Why or why not?**
+
+The most common words in the plot are non-informative words such as "a", "the", or "to". These words are called "Stop words", and they are some of the most common words in a language, and can obscure any interesting or unique word patterns in the data. Stop words are normally removed from the text before analysis. The tidytext package provides a list of common stopwords to use for reference during analysis. 
+
+
+## removing stop words
+```{r}
+data(stop_words) #load stopwords from tidytext package data.
+
+#we filter out stopwords from our data set using an anti_join.
+text_df3 <- text_df %>% 
+  count(word, sort = TRUE) %>%
+  anti_join(stop_words) %>%
+  slice(1:10) %>%
+  mutate(word = reorder(word, n))
+
+p3 <- ggplot(text_df3, aes(x = n, y = word)) + geom_col(); p3
+
+```
+
+**Exercise: What are the most common (n = 10) used words in books 2 and 3? Plot a figure that compares the most frequent words between each book.**
+
+## Sentiment Analysis
+
+One way to analyze text data is to consider the emotional intent of the words used. While the exact interpretation of strings of text can be difficult for a computer to understand, it is easier to discern the general sentiment of the choice of words. Words can generally be classified as positive ("enthusiastic") or negative ("depressing"). By categorizing words by their positive or negative sentiment, we can analyze groups of text data by their relative proportion of positive or negative words.
+
+There are multiple different ways to calculate the sentiment for individual words. Tidytext provides options to use different reference sentiments.
+```{r}
+#get_sentiments("bing")
+#get_sentiments("nrc")
+#get_sentiments("afinn")
+
+text_df4 <- text_df %>%
+  group_by(chapter_num) %>%
+  count(word, sort = TRUE) %>%
+  anti_join(stop_words) %>%
+  inner_join(get_sentiments("bing"))
+
+p4 <- text_df4 %>%
+  group_by(chapter_num, sentiment) %>%
+  summarize(n = sum(n)) %>%
+  ggplot(aes(x = chapter_num, y = n, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~sentiment)
+
+p4
+```
+**Exercise: What are the most common positive and negative words used in each chapter?**
+
+## N-gram analysis
+
+Instead of looking at individual words, it is sometimes more useful to look at a group of words taken together. Instead of tokenizing sentences into individual words, we split them into N-grams, where N is the number of words in a group. The __unnest_tokens__ function has an option to split sentences into N-grams rather than individual words.
+
+```{r}
+text_df5 <- katara_book1 %>% 
+  unnest_tokens(bigram, full_text, token = "ngrams", n = 2)
+
+p5 <- text_df5 %>%
+  select(chapter_num, bigram) %>%
+  group_by(chapter_num) %>%
+  count(bigram, sort = TRUE) %>%
+  slice(1:5) %>%
+  ungroup() %>%
+  filter(!is.na(bigram)) %>%
+  ggplot(aes(y = bigram, x = n)) + geom_bar(stat = "identity") + facet_wrap(~chapter_num, scales = "free_y")
+
+p5
+```
+**Exercise: What words are most commonly used with the word "Water"? Plot a visualization of these words ordered by their frequency.**
+__Hint: Use dplyr::separate to split a bigram into two different words__
+
+```{r}
+
+water <- text_df5 %>%
+  dplyr::select(bigram) %>%
+  tidyr::separate(bigram, into = c("word", "word1")) %>%
+  dplyr::anti_join(stop_words) %>%
+  dplyr::rename(word1 = "word", word = "word1") %>%
+  dplyr::anti_join(stop_words) %>%
+  dplyr::mutate(word = tolower(word), word1 = tolower(word1)) %>%
+  dplyr::filter(word == "water" | word1 == "water") %>%
+  tidyr::unite("bigram", word, word1, sep = " ") %>%
+  dplyr::count(bigram, sort = TRUE)
+
+w1 <- water %>%
+  ggplot(aes(y = reorder(bigram, n), x = n)) + geom_bar(stat = "identity")
+
+w1
+```

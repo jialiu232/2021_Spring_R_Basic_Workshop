@@ -1,0 +1,322 @@
+---
+title: "Supplement 1: Tidyverse Workflow"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    collapsed: false
+    css: style.css
+---
+
+---- 
+
+Author: Henri Chung, Jia Liu    
+
+Date: 03/27/2021
+
+----
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this tutorial, we will be analyzing college tuition data provided by the National Center for Education of Statistics (NCES). We will perform a basic data analysis workflow broken up into three steps.
+
++ Cleaning the data.
++ Basic analysis.
++ Visualization.
+
+
+## Preparing the workspace
+
+First we prepare our programming workspace by making sure our environment is cleared of any objects and that we have loaded the necessary packages.
+```{r}
+#remove objects from memory
+rm(list = ls())
+
+#load the necessary packages.
+#if the package is not already installed, please install it
+if (!require("rvest")) install.packages("rvest") #rvest is a package for scraping data from webpage.
+if (!require("tidyverse")) install.packages("tidyverse") #tidyverse is a collective name for a family of packages with similiar design and function.
+
+#load the packages.
+library(rvest)
+library(tidyverse)
+
+```
+
+#### **Data collection**
+
+We will be looking at college tuiition data from the following NCES [webpage](https://nces.ed.gov/fastfacts/display.asp?id=76).
+
+But how do we get this data into R?
+
+```{r}
+#first we assign the url link to an object
+url <- "https://nces.ed.gov/fastfacts/display.asp?id=76"
+
+#use xml2 package to read the html data from webpage.
+nces_html <- xml2::read_html(url)
+
+#convert webpage into a dataframe. html_table() returns a list with 1 element, so we take only the first element from the list.
+nces_table <- html_table(nces_html, fill = TRUE)[[1]]
+
+#convert tibble into a dataframe. (What is the difference between a dataframe and a tibble?)
+nces_tibble1 <- as_tibble(nces_table)
+
+#Take only the 4th to last rows of the data.
+nces_tibble2 <- dplyr::slice(nces_tibble1, 4:n())
+
+#set the column names for the tibble. We get our column names from the original table url.
+nces_tibble3 <- rlang::set_names(nces_tibble2, 
+                                 nm = c("year", "All Constant", "4 Year Constant", "2 Year Constant", 
+                                        "All Current", "4 Year Current", "2 Year Current"))
+nces_raw <- dplyr::mutate(nces_tibble3, 
+                                year = str_replace(year, "–", "-"), #replace en dash with em dash. 
+                                year = str_replace(year, "1985-862", "1985-86")) #fix year issue cause by superscript.
+
+```
+
+
+**Question: Is this dataframe ready for analysis? Why or why not? How would you want to reorganize the dataframe if necessary?**
+
+
+Currently, the dataframe has several rows (22, 42, 63) that do not record the same values as the rest of the dataframe. These rows are leftover formatting from how the data was arranged at the url link. 
+
+
+Here we introduce the `tidyr::pivot_longer()` function, which "lengthens" the data by increasing the number of rows (length) while decreasing the number of rows (width). This operation can be hard to grasp, but it is more easily understood when looking at an example. Run the chunk below and compare the "all_school1" with "all_school2".
+
+```{r}
+#https://nces.ed.gov/programs/digest/d19/tables/dt19_330.10.asp?current=yes
+
+all_school_wide <- nces_raw %>% #start with the raw dataframe
+  dplyr::slice(2:21) %>% #take rows 2 to 20
+  dplyr::mutate(type = "All Institutions") #"mutate" a new column called "type", all values of that column == "All Institutions"
+
+all_school_long <- all_school_wide %>%
+  tidyr::pivot_longer(names_to = "tuition_type", values_to = "tuition_cost", `All Constant`:`2 Year Current`) 
+
+all_school <- all_school_long %>%
+  dplyr::select(type, year, everything()) %>% #take only these columns
+  dplyr::mutate(tuition_cost = readr::parse_number(tuition_cost)) #drop any non-numeric characters before or after the first number (ex: $)
+```
+
+**Question: Write out your own code to separate the "Public" and "Private" school data as was done for "All Institutions"in the previous chunk.**
+
+Example Answer:
+```{r}
+public_school <- nces_raw %>% 
+  slice(23:41) %>% 
+  mutate(type = "Public") %>%
+  pivot_longer(names_to = "tuition_type", values_to = "tuition_cost", `All Constant`:`2 Year Current`) %>% 
+  select(type, year, everything()) %>% 
+  mutate(tuition_cost = parse_number(tuition_cost))
+
+
+private_school <- nces_raw %>% 
+  slice(43:(n()-1)) %>% 
+  mutate(type = "Private") %>% 
+  pivot_longer(names_to = "tuition_type", values_to = "tuition_cost", `All Constant`:`2 Year Current`) %>% 
+  select(type, year, everything()) %>% 
+  mutate(tuition_cost = parse_number(tuition_cost))
+```
+
+After separately processing the 3 subsets, we want to recombine the data into a single dataframe for further analysis. 
+
+```{r}
+tuition_data <- dplyr::bind_rows(all_school, public_school, private_school) #combine the 3 dataframes rowwise.
+
+write_csv(tuition_data, "data/historical_tuition.csv") #save the output as its own file.
+```
+
+
+**Practice reading in data from a website by practicing with a new link. Use the link provided to download and format the provided data table into R. Part of the answer has been coded for you.**
+
+_Hint: To make the task less tedious, you do not have to add add column names._ 
+
+```{r}
+url = "https://nces.ed.gov/programs/digest/d19/tables/dt19_330.10.asp?current=yes"
+test = url %>% 
+  read_html() %>% #blank
+  html_table(fill = TRUE) %>% 
+  .[[5]] %>% 
+  rlang::set_names(nm = paste("x", 1:ncol(.))) %>% 
+  as_tibble() %>%  #blank
+  slice(5:n()) #blank
+dim(test)
+```
+
+## Explore Data
+
+Prior to analyzing our data, we are going to take an exploratory look at the data just so that we are familiar with the data's structure and begin to think about how would we start to analyze it. 
+
+```{r}
+#Look at head.
+head(tuition_data)
+
+#column names.
+colnames(tuition_data)
+
+#what kind of variable is in each column?
+apply(tuition_data, 2, class)
+
+#how many variables are in each class?\
+apply(tuition_data[1:3], 2, table)
+
+```
+
+**Question: From looking at this data, what questions might we be interested in asking?**
+
+## Linear models
+
+A model is a mathematical representation for the relationship between a variable of interest and one or more predictor variables. For a linear model,  This relationship is described by the function;
+
+$$
+Y = \beta_0 +  \beta_1X_1 + \beta_2X_2 ... \beta_nX_n + \epsilon
+$$
+
+
+Where Y is the variable of interest (outcome variable) and X is the predictor (explanatory variable). B represents the coefficients for each predictor that describe how values of the predictor variable influence the output variable.
+
+We can use linear models to answer some of our initial questions about the dataset. But in order to prepare our data for use in a linear model, we have to make a few adjustments. 
+
+```{r}
+tuition_data1 <- tuition_data %>% 
+  tidyr::separate(year, sep = "-", into = c("start_year", "end_year") ) %>% #first separate year into start and end year.
+  mutate(start_year = as.numeric(start_year), end_year = as.numeric(end_year)) %>% #convert start and end year into numbers.
+  mutate(currency = ifelse(grepl("Constant", tuition_type), "Constant", "Current")) #create a new variable, "currency" for constant 2017-2018 dollars vs current dollars.
+
+head(tuition_data1)
+```
+
+
+Now that we've edited our data, we can start creating some models. 
+```{r}
+model1 <- stats::lm(tuition_cost ~ start_year, data = tuition_data1)
+summary(model1)
+```
+**How do we interpret the model summary?**
+
+* **Call** - the model formula.
+* **Residuals** - Error between observed and fitted values.
+* **Coefficients**
+* **Estimate** - Value for the coefficient. 
+* **Std. Error** - standard error for Estimate.
+* **t value** - test statistics for null hypothesis that coefficient has no effect.
+* **Pr(> |t|)** - p value for hypothesis test.
+* **Signif. codes** - indicates level of statistical significance.
+* **Residual standard error** - Average residual value.
+* **Degrees of Freedom** -  number of data points that went into the estimation of the parameters. 
+* **Multiple R-squared** - Measure of model fit.
+* **Adjusted R-squared** - Adjusts value by considering multiple parameter variable.
+* **F-statistics** - Test statistics for hypothesis that all coefficients are zero.
+* **P-value** - p value for F statistics.
+
+**Why do we need adjusted R-squared? R-squared will necessarily increase with more model parameters, leading to overfitting.**
+
+We can plot our model's fitted values to see how well the model matched the data.
+```{r}
+#predict from our model.
+model1_pred <- model1$fitted.values %>%
+  base::cbind(tuition_data1$start_year) %>%
+  tibble::as_tibble() %>%
+  purrr::set_names(nm = c("pred_tuition_cost", "year"))
+
+#plot our data and our model predictions. 
+ggplot(tuition_data1, aes(x = start_year, y = tuition_cost)) + 
+  geom_point() + 
+  geom_line(data = model1_pred, aes(x = year, y = pred_tuition_cost), color = "red") 
+```
+
+Clearly, our first model does not fit the data very well because we did not take into account the other variables into our first analysis. 
+
+
+```{r}
+tuition_data2 <- tuition_data1 %>%
+  filter(!grepl("All", type) & !grepl("All", tuition_type)) %>% #remove combined "all" values.
+  filter(currency == "Constant") %>% #select constant currency type.
+  mutate(tuition_type = as.factor(tuition_type), type = as.factor(type)) #change character variables to factors.
+
+```
+
+**What model formulation should we use to account for the effects of start_year, tuition_type and type where they are represented by x1, x2, and x3?** 
+
+* y ~ x1 + x2 + x3 
+* y ~ 0 + x1 + x2 + x3 
+* y ~ .
+* y ~ x1 + x2 - 1
+* y ~ x1 + x2 + x1:x2
+* y ~ x1 * x2
+* y ~ x1 + x2 + x3 + x1:x2 + x1:x3 + x2:x3 + x1:x2:x3
+* y ~ x1 * x2 * x3
+* y ~ (x1 + x2 + x3)ˆ2
+* y ~ x1 + I(x1ˆ2) + x3
+* y ~ poly(x1, 2, raw = TRUE) + x3
+
+**Whats the difference between the following model formulations?**
+
+* y ~ x1 + x2 + x3 | multiple regression
+* y ~ 0 + x1 + x2 + x3 | multiple regression without intercept
+* y ~ . | regression on all variables
+* y ~ x1 + x2 - 1 | exclude intercept
+* y ~ x1 + x2 + x1:x2 | interact between x1 and x2
+* y ~ x1 * x2 | same as above
+* y ~ x1 + x2 + x3 + x1:x2 + x1:x3 + x2:x3 + x1:x2:x3 | all two-way and three-way interactions
+* y ~ x1 * x2 * x3 | same as above
+* y ~ (x1 + x2 + x3)ˆ2 | all two way interactions
+* y ~ x1 + I(x1ˆ2) + x3 | polynomial regression
+* y ~ poly(x1, 2, raw = TRUE) + x3 | polynomial regression
+
+
+```{r}
+#new model formulations
+model2 <- stats::lm(tuition_cost ~ start_year + tuition_type * type, data = tuition_data2)
+
+```
+
+**Question: Why does the model not report the effects of a __tuition_type: 2 Year__ and __type: Public__ ? **
+```{r}
+#check levels of each variable.
+apply(select(tuition_data2, tuition_type, type), 2, unique)
+
+#summary of model plot.
+summary(model2)
+```
+```{r}
+#diagnostic plots for the model.
+plot(model2)
+```
+
+**Question: How do we interpret the plots produced by the model?**
+
+* **Residuals vs Fitted** - This plot shows the relationship between the residuals and the fitted values. This plot is an indicator if you have a linear relationship in your data.You want to check that the residuals are evenly spread around a horizontal line, not following any discernable pattern.
+
+* **Normal Q-Q** - shows if residuals are normally distributed. Normally distributed residuals will closely align with the diagonal 1:1 line on the plot. Curves near either end of the diagonal indicate your data may be skewed. (More details: https://data.library.virginia.edu/understanding-q-q-plots/)
+
+* **Scale-Location** - This plot shows if residuals are spread equally along the ranges of predictors. This plot is used to check for homoscedasticity or if variables have equal variance.
+
+* **Residuals vs Leverage** - This plot is used to check for over influential outlier data points. If an outlier significantly changes the model output, it could lead to worse predictions. In these plots, we are checking for any outlying values in the upper right or lower right corners.  
+
+
+Knowing what we've learned about the effects of **tuition_type** and **type** variables, we can better visualize the underlying data by facet along the two variables.
+
+```{r}
+ggplot(tuition_data2, aes(x = start_year, y = tuition_cost)) + geom_point() + facet_grid(tuition_type~type)
+```
+
+**repeat the previous analysis with the following data set and answer the following questions.**
+
++ How many variables are in the data? 
++ What type of variables are they?
++ What relationship are you interested in modeling?
++ What model formula would you use to describe that relationship?
++ What does the model summary tell you about your data?
++ Does the model fit your data well?
++ Using ggplot, make a plot that visualizes the relationship you are modeling.
+
+
+
